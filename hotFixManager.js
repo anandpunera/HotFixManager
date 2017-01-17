@@ -9,12 +9,17 @@ var Backup='../BackUp';
 var path = require('path');
 var csawar_lib="../../jboss-as/standalone/deployments/csa.war/WEB-INF/lib";
 var portal="../../portal"; 
-var UnzipDirectory;
+var UnzipDirectory; 
+var serialnumber;
+var rl = readline.createInterface(process.stdin, process.stdout);
 if(!fs.existsSync(db))
-{
-var db = new Datastore({filename : 'HotFixRecord'});
-db.loadDatabase();
-}
+  {
+    var db = new Datastore({filename : 'HotFixRecord'});
+    db.loadDatabase();
+  }
+  
+  if(process.argv[2]!='-list')
+      var hotfx=process.argv[3].split('.')[0];
  var deployMain= function()
     {
        var Time =new Date;
@@ -23,25 +28,33 @@ db.loadDatabase();
        if(fs.existsSync('../'+process.argv[3]))
         {
          var hotfixName;
-         var hotfx=process.argv[3].split('.')[0];
-         db.find({status : 'deployed',hotfixname: hotfx}, function (err,docs)
-           { 
-             if(docs.length>0)
+         //var hotfx=process.argv[3].split('.')[0];
+      db.count({process : 'deploy',status:'success',hotfixname: hotfx}, function (err,countDeploy)
+        { 
+          db.count({process : 'undeploy',status:'success',hotfixname: hotfx}, function (err,countUndeploy)
+            {
+            if(countDeploy>countUndeploy)
               {
-                console.log('......The hotfix is already deployed');
+                console.log('......Sorry!! The hotfix '+hotfx+' is already deployed');
+                process.exit(1);
               }
              else
-              {   
+              {  
                 //prompt user and warn that service shall be stopped before  starting deployment
-                var rl = readline.createInterface(process.stdin, process.stdout);
-                rl.setPrompt('Please Note!! services will be stopped and started during Deployement. \n\n press "Y" if you wish to continue or press "N" to abort deployement  \n ');
+                rl.setPrompt('Please Note!! services will be stopped and started during Deployement. \n\n HIT "Y" if you wish to continue or HIT "N" to abort deployement  \n ');
                 rl.prompt();
                 rl.on('line', function(line) 
                 {
                   if (line === "Y"||line=="y") rl.close();
-                  else   process.exit(0);
+                  else   
+                   process.exit(1);
                  }).on('close',function()
-                 {
+                  {
+                    db.count({process:'deploy',status:'success'}, function (err,count)
+                      {
+                        var serialnumber=count+1;
+                        db.insert({hotfixNumber:serialnumber+'D', hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'in progress'});
+                      });
                     var stopServicePromise= new Promise(function(resolve, reject)
                        {
                           stopServices(resolve, reject);
@@ -57,15 +70,27 @@ db.loadDatabase();
                                      startCSA_RecordInDB(hotfx);
                                   }).catch(function(e) 
                                      { 
-                                        console.log('......catch : promise to restart CSA service went wrong'+e); 
+                                        console.log('......Alas! Deployement was unsuceessful..\n   \n  starting services  \n'+e); 
+                                        db.find({hotfixname: hotfx,process:'deploy',status:'in progress'}, function (err,docs)
+                                          {
+                                            if(docs.length>0)
+                                            {
+                                              db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'failure'});
+                                              db.remove ({hotfixname: hotfx,process:'deploy',status:'in progress'}, {});
+                                            }
+                                          });
+                                        startServices();
                                      });
-                            }).catch(function(e){
-                          console.log('cannot proceed with undeployement');
+                            }).catch(function(e)
+                            {
+                           console.log('\n\n       Sorry!! could not stop services..Looks like Some services were already stopped \n       Try again\n');
+                           startServices();
                        });
-                  });
-                } 
-         });
-     }
+                  });      
+                }
+              }); 
+            });
+        }
      else 
        console.log('......The hotfix '+process.argv[3]+' is not present in the hotfixes directory');
     }
@@ -89,13 +114,19 @@ var startCSA_RecordInDB=function(hotfx)
               }
              else
               {
-                 db.insert({hotfixname : hotfx, Deployed_On: startTime, status:'deployed'});
-                 console.log('...... Hotfix'+process.argv[3]);
-                 console.log('......Deployed.. Restarting CSA Service'); 
+                 
+                 db.find({hotfixname: hotfx,process:'deploy',status:'in progress'}, function (err,docs)
+                  {
+                    if(docs.length>0)
+                    {
+                      db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'success'});
+                      db.remove ({hotfixname: hotfx,process:'deploy',status:'in progress'}, {});
+                    }
+                  }); 
+                 console.log('...... Hotfix '+process.argv[3]+ ' ......Deployed.. Restarting CSA Service');
                  startServices();
               }
-   
- });
+            });
 } 
 
 //undeploy execution thread starts from here
@@ -104,34 +135,85 @@ var startCSA_RecordInDB=function(hotfx)
     var Time =new Date;
     var startTime=Time.getFullYear()+':'+Time.getMonth()+':'+Time.getDay()+':'+Time.getHours()+':'+Time.getMinutes()+':'+Time.getSeconds();
     console.log('\n**************************Welcome to CSA HotFix Deployer***********************\n\n'+startTime+'\n');
-    var hotfx=process.argv[3].split('.')[0];
-    db.find({status : 'deployed',hotfixname: hotfx}, function (err,docs)
-     { 
-        if(docs.length==0)
-         {
-           console.log('......No such hotfix (' +hotfx+') to undeploy');
-         }
-       else
-         {
-            var rl = readline.createInterface(process.stdin, process.stdout);
-            rl.setPrompt('Please Note!! services will be stopped and started during UnDeployement. \n\n press "Y" if you wish to continue or press "N" to abort UnDeployement  \n ');
-            rl.prompt();
-            rl.on('line', function(line) {
-            if (line === "Y"||line=="y") rl.close();
-            else   process.exit(0);
-             }).on('close',function()
-            {   
-                var stopServicePromise= new Promise(function(resolve, reject){
-                  stopServices(resolve, reject);
-                })
-                stopServicePromise.then(function(e){
-                   undeploy(hotfx);
-                }).catch(function(e){
-                   console.log('.....cannot proceed with undeployement');
-                });
-               
-            });
-          }
+   // var hotfx=process.argv[3].split('.')[0];
+    db.find({process : 'deploy',status:'success',hotfixname: hotfx}, function (err,docs)
+      {  
+        db.count({process : 'undeploy',status:'success',hotfixname: hotfx}, function (err,countUnDeployed)
+          {
+              if(docs.length<=countUnDeployed)
+              {
+                console.log('......No such hotfix (' +hotfx+') to undeploy');
+                process.exit(1);
+              }
+            {
+            var serial=docs[0]['hotfixNumber'];
+            serial=serial[0];
+            var undeployTheseFirst= new Array;
+            //console.log(docs[0]['hotfixNumber']);
+            db.count({process : 'deploy',status:'success'}, function (err,countDeployed) 
+              {
+                if(countDeployed>serial)
+                  {
+                    //console.log('There were some hotfixes deployed after '+ hotfx+' was deployed  \n\nPlease undeploy these hotfixes below in the same order before undeploying the hotfix '+hotfx);
+                    for(var j=countDeployed;j>serial;j--)
+                      {  
+                        console.log(j+'  '+serial);
+                        db.find({hotfixNumber:j+'D',process:'deploy', status:'success'}, function (err,docss)
+                         {
+                           var thisHotfix=docs[0]['hotfixNumber'];
+                           var thisHotfixNumber=thisHotfix[0];
+                           console.log(j);
+                           db.count({hotfixNumber:thisHotfixNumber+'U',process:'undeploy', status:'success'}, function (err,undeployedCount)
+                           {
+                              if(docss.length>0 && undeployedCount==0)
+                                {
+                                    console.log('\n Could not undeploy .. Some hotfixes were deployed after this hotfix');
+                                   // undeployTheseFirst.push(docss[0]['hotfixname']);
+                                    //console.log(' We must undeploy this hotfix '+ docss[0]['hotfixNumber'] +'    '+docss[0]['hotfixname']+' \n so that we can undeploy hotfix '+hotfx+'\n');
+                                }
+                                
+                             });
+                            
+                         });
+                          if(j==serial+1)
+                                  process.exit(1);
+                       }
+                   }
+                else
+                 {
+                   rl.setPrompt('\n Please Note!! services will be stopped and started during UnDeployement. \n\n HIT "Y" if you wish to continue or HIT "N" to abort UnDeployement  \n ');
+                   rl.prompt();
+                   rl.on('line', function(line) {
+                   if (line === "Y"||line=="y") 
+                      rl.close();
+                   else 
+                   {  
+                      process.exit(0); 
+                   }
+                   }).on('close',function()
+                    {   
+                      db.count({process:'undeploy',status:'success'}, function (err,count)
+                      {
+                        var serialnumber=count+1;
+                        db.insert({hotfixNumber:serialnumber+'U', hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'in progress'});
+                      });
+                      var stopServicePromise= new Promise(function(resolve, reject)
+                      {
+                          stopServices(resolve, reject);
+                       });
+                      stopServicePromise.then(function(e)
+                      {
+                        undeploy(hotfx);
+                      }).catch(function(e)
+                      {
+                        console.log('.....cannot proceed with undeployement');
+                      });
+                    });
+                 } 
+              });
+                
+        }
+      });
       });
    }
 //List the hotfixes that are currently deployed
@@ -140,12 +222,31 @@ var startCSA_RecordInDB=function(hotfx)
        var Time =new Date;
        var startTime=Time.getFullYear()+':'+Time.getMonth()+':'+Time.getDay()+':'+Time.getHours()+':'+Time.getMinutes()+':'+Time.getSeconds();
        console.log('\n**************************Welcome to CSA HotFix Deployer***********************\n\n'+startTime+'\n');
-       console.log('......Below Hotfixes are currently deployed \n');
-       db.find({status : 'deployed'}, function (err,docs)
+       db.find({status : 'success',process:'deploy'}, function (err,docs)
           { 
-           console.log(docs);
-          });
-    }
+            if(docs.length>0)
+            {
+              for(var k=0;k<docs.length;k++)
+              {
+                db.find({status : 'success',process:'undeploy',hotfixname:docs[k]['hotfixname']}, function (err,docss)
+                {
+                  if(docss.length==0)
+                  {
+                     console.log(docs);
+                     process.exit(1);
+                  }
+                });
+              }
+            }
+            else
+                {
+                    console.log('......No Hotfixes are currently deployed \n');
+                    process.exit(1);
+                }
+             
+          }); 
+      
+     }
 
 //function that creates directory with a given name at a given location
 var mkdirSync = function (path) 
@@ -183,36 +284,6 @@ var mkdirSync = function (path)
       }
    return dir;
  }
-//function to create BackUp Directory structure for Class files in the hotfix
-function createClassBackupDirectory(result,folder)
-  { 
-    //console.log(result);
-    var res=csawar_lib.split("/");
-    for(var j=0;j<=result.length-2;j++)
-      {  
-         if(j>result.indexOf('lib'))
-         res.push(result[j]);
-      }
-    var dir=Backup;
-    dir=dir+'/'+folder;
-    if (!fs.existsSync(dir)) 
-      {
-        mkdirSync(dir);
-      }
-    for(var j=2;j<=res.length-1;j++)
-      { 
-        dir=dir+'/'+res[j];
-        if (!fs.existsSync(dir)) 
-          {
-            mkdirSync(dir);
-            if(j==res.length-1)
-              {
-                console.log('......Classes BackUp Directory '+dir+' Created\n');
-              }
-          }
-      }
-    return dir;
-   }
  //function to create BackUp Directory structure for MPP javascript files in the hotfix
 function createJsBackupDirectory(directoryStructure,createHere)
   {
@@ -268,18 +339,15 @@ var scanforMppjsfiles=function(home,resolve_scanforMppjsfiles, reject_scanforMpp
                     fileCurrentTemp2=fileCurrent.substring(j+1,fileCurrent.length); //name of the .js file
                     fileCurrentTemp=fileCurrent.substring(0,j);//directory structure where .js file resides.
                     var indexhtml=fileCurrentTemp+'..';
-                    // console.log(fileCurrentTemp);
                     break;
                   }
                }
             var dir=createJsBackupDirectory(fileCurrentTemp,folderName); //create directory to backUp .js file
-            //console.log(dir);
             var res=dir.split('/');
             while(res[0]!='portal')
              {
                res.shift();
              }
-            // console.log(res);
             var BackUpfrom='../../'+res[0];
             for(var j=1;j<res.length;j++)
              {
@@ -290,7 +358,6 @@ var scanforMppjsfiles=function(home,resolve_scanforMppjsfiles, reject_scanforMpp
                   }
               }
             var filestobackup=fs.readdirSync(BackUpfrom);
-            //console.log(filestobackup);
             for(var i=0;i<filestobackup.length;i++)
               {
                  if(!fs.existsSync(dir+'/'+filestobackup[i]))
@@ -373,8 +440,6 @@ var replaceJavaScriptFiles = function(destination, source, name)
     var typeofjs;
     nameSplit= name.split('.');
     typeofjs=nameSplit[1]+'.'+nameSplit[2];
-    //console.log('......\n\n'+name);
-    //console.log('\ntype Of JavaScript file   '+typeofjs);
     scan(destination,typeofjs,function(err, files) 
       {
         files.forEach(function(file)
@@ -406,12 +471,12 @@ var replaceJavaScriptFiles = function(destination, source, name)
                    mkdirSync(Backup);
                    console.log('......created '+Backup+'  directory');
                  }
-            else 
-              console.log('......directory '+Backup+' already exists');
+               else 
+                 console.log('......directory '+Backup+' already exists');
              }
            
-               files.forEach(function(file)
-                 {
+            files.forEach(function(file)
+                {
                    var fileCurrent=file;
                    var fileCurrentTemp=file;
                    var fileCurrentTemp2=file;
@@ -425,22 +490,28 @@ var replaceJavaScriptFiles = function(destination, source, name)
                          break;
                         }
                     }
-                  
                    var dir=Backup;
                    dir=dir+'/'+folderName;
                    if (!fs.existsSync(dir)) 
                      {
                        mkdirSync(dir);
                      }
-                   fs.writeFileSync(dir+'/'+fileCurrent, fs.readFileSync(csawar_lib+'/'+fileCurrent));
-                   fs.unlinkSync(csawar_lib+'/'+fileCurrent);
-                   fs.writeFileSync(csawar_lib+'/'+fileCurrent, fs.readFileSync(file)); 
-                   if(files.indexOf(file)==files.length-1)
-                   {
-                     console.log(files.indexOf(file)+'  '+file);
-                     startCSA_RecordInDB(folderName);
-                     resolve_scanforUnZipJarfiles();
-                   }
+                     if(fs.existsSync(csawar_lib+'/'+fileCurrent))
+                     {
+                        fs.writeFileSync(dir+'/'+fileCurrent, fs.readFileSync(csawar_lib+'/'+fileCurrent));
+                        fs.unlinkSync(csawar_lib+'/'+fileCurrent);
+                        fs.writeFileSync(csawar_lib+'/'+fileCurrent, fs.readFileSync(file)); 
+                        if(files.indexOf(file)==files.length-1)
+                        {
+                         // startCSA_RecordInDB(folderName);
+                          resolve_scanforUnZipJarfiles();
+                        }
+                     }
+                     else
+                     {
+                        console.log('Jar file  '+csawar_lib+'/'+fileCurrent+'  doesnot exist. Please check whether the Hotfix applies for this release');
+                        reject_scanforUnZipJarfiles();
+                    }
                   }); 
         });
   }
@@ -464,11 +535,20 @@ var undeploy= function(hotfx)
                  break;
                }
             }
-          console.log(fileCurrent+'   '+file);
-          fs.writeFileSync(csawar_lib+'/'+fileCurrent, fs.readFileSync(file));
+          if(fs.existsSync(csawar_lib+'/'+fileCurrent))
+          {
+            fs.writeFileSync(csawar_lib+'/'+fileCurrent, fs.readFileSync(file));
+          }
           if(files.indexOf(file)==files.length-1)
             {  
-               db.remove ({hotfixname: hotfx}, {});
+                db.find({hotfixname: hotfx,process:'undeploy',status:'in progress'}, function (err,docs)
+                  {
+                    if(docs.length>0)
+                    {
+                      db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'success'});
+                      db.remove ({hotfixname: hotfx,process:'undeploy',status:'in progress'}, {});
+                    }
+                  }); 
                startServices();
             }
         });
@@ -525,7 +605,14 @@ var undeploy= function(hotfx)
             replaceJavaScriptFiles(pathtoscript,file,fileCurrent); //pathtoscript=\portal\node_modules\mpp-ui\dist\scripts  \\file=.js file from BackUp  \\fileCurrent=complete name of the js file
             if(files.indexOf(file)==files.length-1)
             {  
-               db.remove ({hotfixname: hotfx}, {});
+               db.find({hotfixname: hotfx,process:'undeploy',status:'in progress'}, function (err,docs)
+                  {
+                    if(docs.length>0)
+                    {
+                      db.insert({hotfixNumber:docs[0]['hotfixNumber']+'U', hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'success'});
+                      db.remove ({hotfixname: hotfx,process:'undeploy',status:'in progress'}, {});
+                    }
+                  }); 
                startServices();
             }
         });
@@ -604,7 +691,6 @@ var undeploy= function(hotfx)
                              break; 
                           }
                     }
-                 //var dir=createClassBackupDirectory(folderName);
                  var dir=Backup;
                  dir=dir+'/'+folderName;
                  if (!fs.existsSync(dir)) 
@@ -622,7 +708,6 @@ var undeploy= function(hotfx)
                 fs.writeFileSync(dir+'/'+jartozip+'.jar', fs.readFileSync(csawar_lib+'/'+jartozip+'.jar'));
                 replaceWithChangedClasses(UnzippedJar, fileCurrentTemp,resolve_Unjar,reject_Unjar);
             } 
-          
         });
         object.then(function(e) 
            {
@@ -651,6 +736,7 @@ var undeploy= function(hotfx)
                         resolve_scanforUnZipClassfiles();
                     }).catch(function(e) 
                      { 
+
                        console.log('......catch : zipBack not successful'+e);
                        reject_scanforUnZipClassfiles();
                     }); 
@@ -658,7 +744,9 @@ var undeploy= function(hotfx)
               })
          object.catch(function(e)
           { 
-            console.log('......catch : check in function replaceWithChangedClasses'); 
+            console.log('......catch : check in function replaceWithChangedClasses '+e);
+            reject_scanforUnZipClassfiles();
+             
           });
         });
       }
@@ -711,9 +799,14 @@ var ZipBack=function(csawar_lib1,jartozip,resolve,reject)
 
 var replaceWithChangedClasses=function(replacethisfile, withthisfile,resolve,reject)
   {
-      fs.unlinkSync(replacethisfile);
-      fs.writeFileSync(replacethisfile, fs.readFileSync(withthisfile));
-      resolve();
+      if(fs.existsSync(replacethisfile)&& fs.existsSync(withthisfile))
+      {
+        fs.unlinkSync(replacethisfile);
+        fs.writeFileSync(replacethisfile, fs.readFileSync(withthisfile));
+        resolve();
+      }
+      else
+        reject();
   }
 //scans through the unzipped files and directories for another zip file to further unzip it
 var scan = function(dir, suffix, callback)
@@ -786,10 +879,10 @@ var unzipAndDeployHotfix= function(zipFile,resolve_Promise_unzipAndDeployHotfix,
        });
    object.then(function(e) 
           {
-            console.log('resolved unZipper');
+            console.log('......resolved unZipper');
             resolve_unZipper(); //resolve the promise passed to this function
           }).catch(function(e) 
-          { 
+          {
             reject_unZipper();////resolve the promise passed to this function
             console.log('......catch :Sorry Deployment went wrong! check unzipper method ');
           });
@@ -797,8 +890,7 @@ var unzipAndDeployHotfix= function(zipFile,resolve_Promise_unzipAndDeployHotfix,
   //This method calls the functions for deployement
   var deployDifferentFiles=function(resolvedeployDifferentFiles, rejectdeployDifferentFiles)
     { 
-      var object = new Promise(function(resolve_scanforUnZipJarfiles, reject_scanforUnZipJarfiles)
-         { 
+      
            //scan for jar files in the hotfix
             scan(UnzipDirectory,'.jar',function(err, files) 
             {
@@ -806,7 +898,7 @@ var unzipAndDeployHotfix= function(zipFile,resolve_Promise_unzipAndDeployHotfix,
               {
                 var object = new Promise(function(resolve, reject)
                   {
-                      scanforUnZipjarfiles(resolve_scanforUnZipJarfiles, reject_scanforUnZipJarfiles);
+                      scanforUnZipjarfiles(resolve, reject);
                     
                   });
                 object.then(function(e)
@@ -860,7 +952,6 @@ var unzipAndDeployHotfix= function(zipFile,resolve_Promise_unzipAndDeployHotfix,
                 console.log('......no mpp javascript files found');
                }
            });
-       });
     }
     //stop csa service
   function stopServices(Right, wrong)
@@ -868,6 +959,7 @@ var unzipAndDeployHotfix= function(zipFile,resolve_Promise_unzipAndDeployHotfix,
       var execute = require('child_process').exec;
       if(process.platform=='win32')
         {
+          console.log('......Preparing to stop the services. This will take few seconds\n');
           execute('net stop csa', function (error, stdout, stderr) 
           {
             console.log('......Stopping CSA Service');
