@@ -17,6 +17,11 @@ if(!fs.existsSync(db))
     var db = new Datastore({filename : 'HotFixRecord'});
     db.loadDatabase();
   }
+if(!fs.existsSync(dbLog))
+  {
+    var dbLog = new Datastore({filename : 'HotFixRecordLog'});
+    dbLog.loadDatabase();
+  }
   
   if(process.argv[2]!='-list')
       var hotfx=process.argv[3].split('.')[0];
@@ -52,6 +57,7 @@ if(!fs.existsSync(db))
                           {
                             var serialnumber=count+1;
                             db.insert({hotfixNumber:serialnumber, hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'in progress'});
+                            dbLog.insert({hotfixNumber:serialnumber, hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'in progress'});
                           });
                         var stopServicePromise= new Promise(function(resolve, reject)
                           {
@@ -74,6 +80,7 @@ if(!fs.existsSync(db))
                                                 if(docs.length>0)
                                                 {
                                                   db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'failure'});
+                                                  dbLog.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'failure'});
                                                   db.remove ({hotfixname: hotfx,process:'deploy',status:'in progress'}, {});
                                                 }
                                               });
@@ -111,13 +118,15 @@ var startCSA_RecordInDB=function(hotfx)
                 console.log('......The hotfix is already deployed');
               }
              else
-              {
-                 
+              { 
                  db.find({hotfixname: hotfx,process:'deploy',status:'in progress'}, function (err,docs)
                   {
                     if(docs.length>0)
                     {
+                     db.remove({hotfixname: hotfx,process:'undeploy',status:'success'}, { multi: true }, function (err, numRemoved){ 
+                      }); 
                       db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'success'});
+                      dbLog.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'success'});
                       db.remove ({hotfixname: hotfx,process:'deploy',status:'in progress'}, {});
                       db.remove({hotfixname: hotfx,process:'deploy',status:'failure'}, { multi: true }, function (err, numRemoved){ 
                       });
@@ -187,6 +196,7 @@ if(process.argv[2]=='-undeploy')
                         }).on('close',function()
                           {  
                             db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'in progress'});
+                            dbLog.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'in progress'});
                             var stopServicePromise= new Promise(function(resolve, reject)
                               {
                                 stopServices(resolve, reject);
@@ -534,7 +544,9 @@ var undeploy= function(hotfx)
                     if(docs.length>0)
                     {
                       db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'success'});
+                      dbLog.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'success'});
                       db.remove ({hotfixname: hotfx,process:'undeploy',status:'in progress'}, {});
+                      db.remove ({hotfixname: hotfx,process:'deploy',status:'success'}, {});
                     }
                   }); 
                startServices();
@@ -597,7 +609,9 @@ var undeploy= function(hotfx)
                     if(docs.length>0)
                     {
                       db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'success'});
+                      dbLog.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'success'});
                       db.remove ({hotfixname: hotfx,process:'undeploy',status:'in progress'}, {});
+                      db.remove ({hotfixname: hotfx,process:'deploy',status:'success'}, {});
                     }
                   }); 
                startServices();
@@ -1154,13 +1168,4 @@ var unzipAndDeployHotfix= function(zipFile,resolve_Promise_unzipAndDeployHotfix,
                             console.log('......elasticsearch service started');
                         });
                    }
-                                    
-          }
-
-      
-       
-
-
-
-    
-
+              }
