@@ -20,76 +20,74 @@ if(!fs.existsSync(db))
   
   if(process.argv[2]!='-list')
       var hotfx=process.argv[3].split('.')[0];
- var deployMain= function()
+
+  var deployMain= function()
     {
        var Time =new Date;
        var startTime=Time.getFullYear()+':'+Time.getMonth()+':'+Time.getDay()+':'+Time.getHours()+':'+Time.getMinutes()+':'+Time.getSeconds();
        console.log('\n**************************Welcome to CSA HotFix Deployer***********************\n\n'+startTime+'\n');
        if(fs.existsSync('../'+process.argv[3]))
         {
-         var hotfixName;
-         //var hotfx=process.argv[3].split('.')[0];
-      db.count({process : 'deploy',status:'success',hotfixname: hotfx}, function (err,countDeploy)
-        { 
-          db.count({process : 'undeploy',status:'success',hotfixname: hotfx}, function (err,countUndeploy)
-            {
-            if(countDeploy>countUndeploy)
-              {
-                console.log('......Sorry!! The hotfix '+hotfx+' is already deployed');
-                process.exit(1);
-              }
-             else
-              {  
-                //prompt user and warn that service shall be stopped before  starting deployment
-                rl.setPrompt('Please Note!! services will be stopped and started during Deployement. \n\n HIT "Y" if you wish to continue or HIT "N" to abort deployement  \n ');
-                rl.prompt();
-                rl.on('line', function(line) 
-                {
-                  if (line === "Y"||line=="y") rl.close();
-                  else   
-                   process.exit(1);
-                 }).on('close',function()
+          var hotfixName;
+          db.count({process : 'deploy',status:'success',hotfixname: hotfx}, function (err,countDeploy)
+            { 
+                if(countDeploy>0)
                   {
-                    db.count({process:'deploy',status:'success'}, function (err,count)
+                    console.log('......Sorry!! The hotfix '+hotfx+' is already deployed');
+                    process.exit(1);
+                  }
+                 else
+                  {  
+                    //prompt user and warn that service shall be stopped before  starting deployment
+                    rl.setPrompt('Please Note!! services will be stopped and started during Deployement. \n\n HIT "Y" if you wish to continue or HIT "N" to abort deployement  \n ');
+                    rl.prompt();
+                    rl.on('line', function(line) 
+                    {
+                      if (line === "Y"||line=="y") rl.close();
+                      else   
+                      process.exit(1);
+                    }).on('close',function()
                       {
-                        var serialnumber=count+1;
-                        db.insert({hotfixNumber:serialnumber+'D', hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'in progress'});
-                      });
-                    var stopServicePromise= new Promise(function(resolve, reject)
-                       {
-                          stopServices(resolve, reject);
-                       })
-                       stopServicePromise.then(function(e)
+                        db.count({process:'deploy',status:'success'}, function (err,count)
                           {
-                             var Promise_unzipAndDeployHotfix = new Promise(function(resolve_Promise_unzipAndDeployHotfix, reject_Promise_unzipAndDeployHotfix)
-                                {  
-                                    unzipAndDeployHotfix('../'+process.argv[3], resolve_Promise_unzipAndDeployHotfix, reject_Promise_unzipAndDeployHotfix);
-                                });
-                              Promise_unzipAndDeployHotfix.then(function(e)
-                                  {
-                                     startCSA_RecordInDB(hotfx);
-                                  }).catch(function(e) 
-                                     { 
-                                        console.log('......Alas! Deployement was unsuceessful..\n   \n  starting services  \n'+e); 
-                                        db.find({hotfixname: hotfx,process:'deploy',status:'in progress'}, function (err,docs)
-                                          {
-                                            if(docs.length>0)
-                                            {
-                                              db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'failure'});
-                                              db.remove ({hotfixname: hotfx,process:'deploy',status:'in progress'}, {});
-                                            }
-                                          });
-                                        startServices();
+                            var serialnumber=count+1;
+                            db.insert({hotfixNumber:serialnumber, hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'in progress'});
+                          });
+                        var stopServicePromise= new Promise(function(resolve, reject)
+                          {
+                              stopServices(resolve, reject);
+                          })
+                          stopServicePromise.then(function(e)
+                              {
+                                var Promise_unzipAndDeployHotfix = new Promise(function(resolve_Promise_unzipAndDeployHotfix, reject_Promise_unzipAndDeployHotfix)
+                                     {  
+                                        unzipAndDeployHotfix('../'+process.argv[3], resolve_Promise_unzipAndDeployHotfix, reject_Promise_unzipAndDeployHotfix);
                                      });
-                            }).catch(function(e)
-                            {
-                           console.log('\n\n       Sorry!! could not stop services..Looks like Some services were already stopped \n       Try again\n');
-                           startServices();
-                       });
-                  });      
-                }
+                                  Promise_unzipAndDeployHotfix.then(function(e)
+                                      {
+                                        startCSA_RecordInDB(hotfx);
+                                      }).catch(function(e) 
+                                        { 
+                                            console.log('......Alas! Deployement was unsuceessful..\n   \n  starting services  \n'+e); 
+                                            db.find({hotfixname: hotfx,process:'deploy',status:'in progress'}, function (err,docs)
+                                              {
+                                                if(docs.length>0)
+                                                {
+                                                  db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'failure'});
+                                                  db.remove ({hotfixname: hotfx,process:'deploy',status:'in progress'}, {});
+                                                }
+                                              });
+                                             
+                                            startServices();
+                                        });
+                                }).catch(function(e)
+                                {
+                                  console.log('\n\n      Sorry!! could not stop services..Looks like Some services were already stopped \n       Try again\n');
+                                  startServices();
+                          });
+                      });      
+                    }
               }); 
-            });
         }
      else 
        console.log('......The hotfix '+process.argv[3]+' is not present in the hotfixes directory');
@@ -121,8 +119,17 @@ var startCSA_RecordInDB=function(hotfx)
                     {
                       db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'deploy',status:'success'});
                       db.remove ({hotfixname: hotfx,process:'deploy',status:'in progress'}, {});
+                      db.remove({hotfixname: hotfx,process:'deploy',status:'failure'}, { multi: true }, function (err, numRemoved){ 
+                      });
                     }
                   }); 
+                   db.find({hotfixname: hotfx,process:'deploy',status:'failure'}, function (err,docsFail)
+                      {
+                        if(docsFail.length>0)
+                          {
+                            db.remove({hotfixname: hotfx,process:'deploy',status:'failure'}, { multi: true }, {});
+                          }
+                      });
                  console.log('...... Hotfix '+process.argv[3]+ ' ......Deployed.. Restarting CSA Service');
                  startServices();
               }
@@ -130,92 +137,73 @@ var startCSA_RecordInDB=function(hotfx)
 } 
 
 //undeploy execution thread starts from here
-  if(process.argv[2]=='-undeploy')
+if(process.argv[2]=='-undeploy')
   { 
     var Time =new Date;
     var startTime=Time.getFullYear()+':'+Time.getMonth()+':'+Time.getDay()+':'+Time.getHours()+':'+Time.getMinutes()+':'+Time.getSeconds();
     console.log('\n**************************Welcome to CSA HotFix Deployer***********************\n\n'+startTime+'\n');
    // var hotfx=process.argv[3].split('.')[0];
     db.find({process : 'deploy',status:'success',hotfixname: hotfx}, function (err,docs)
-      {  
-        db.count({process : 'undeploy',status:'success',hotfixname: hotfx}, function (err,countUnDeployed)
+      { 
+        if(docs.length<=0)
           {
-              if(docs.length<=countUnDeployed)
-              {
-                console.log('......No such hotfix (' +hotfx+') to undeploy');
-                process.exit(1);
-              }
-            {
-            var serial=docs[0]['hotfixNumber'];
-            serial=serial[0];
-            var undeployTheseFirst= new Array;
-            //console.log(docs[0]['hotfixNumber']);
-            db.count({process : 'deploy',status:'success'}, function (err,countDeployed) 
-              {
-                if(countDeployed>serial)
-                  {
-                    //console.log('There were some hotfixes deployed after '+ hotfx+' was deployed  \n\nPlease undeploy these hotfixes below in the same order before undeploying the hotfix '+hotfx);
-                    for(var j=countDeployed;j>serial;j--)
-                      {  
-                        console.log(j+'  '+serial);
-                        db.find({hotfixNumber:j+'D',process:'deploy', status:'success'}, function (err,docss)
-                         {
-                           var thisHotfix=docs[0]['hotfixNumber'];
-                           var thisHotfixNumber=thisHotfix[0];
-                           console.log(j);
-                           db.count({hotfixNumber:thisHotfixNumber+'U',process:'undeploy', status:'success'}, function (err,undeployedCount)
-                           {
-                              if(docss.length>0 && undeployedCount==0)
-                                {
-                                    console.log('\n Could not undeploy .. Some hotfixes were deployed after this hotfix');
-                                   // undeployTheseFirst.push(docss[0]['hotfixname']);
-                                    //console.log(' We must undeploy this hotfix '+ docss[0]['hotfixNumber'] +'    '+docss[0]['hotfixname']+' \n so that we can undeploy hotfix '+hotfx+'\n');
-                                }
-                                
-                             });
-                            
-                         });
-                          if(j==serial+1)
-                                  process.exit(1);
-                       }
-                   }
-                else
-                 {
-                   rl.setPrompt('\n Please Note!! services will be stopped and started during UnDeployement. \n\n HIT "Y" if you wish to continue or HIT "N" to abort UnDeployement  \n ');
-                   rl.prompt();
-                   rl.on('line', function(line) {
-                   if (line === "Y"||line=="y") 
-                      rl.close();
-                   else 
-                   {  
-                      process.exit(0); 
-                   }
-                   }).on('close',function()
-                    {   
-                      db.count({process:'undeploy',status:'success'}, function (err,count)
-                      {
-                        var serialnumber=count+1;
-                        db.insert({hotfixNumber:serialnumber+'U', hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'in progress'});
-                      });
-                      var stopServicePromise= new Promise(function(resolve, reject)
-                      {
-                          stopServices(resolve, reject);
-                       });
-                      stopServicePromise.then(function(e)
-                      {
-                        undeploy(hotfx);
-                      }).catch(function(e)
-                      {
-                        console.log('.....cannot proceed with undeployement');
-                      });
+             console.log('......No such hotfix (' +hotfx+') to undeploy');
+             process.exit(1);
+          }
+        else
+          {
+            db.count({process : 'deploy',status:'success'},function (err,countDeployed)
+               {
+                  var serial=docs[0]['hotfixNumber'];
+                  var undeployTheseFirst= new Array;
+                  if(countDeployed>serial)
+                    {
+                      console.log(' Sorry!! There were some hotfixes that were deployed on top of hotfix '+hotfx +'\n Cannot Proceed with undeployement \n First undeploy the hotfixes below in Order\n ');
+                      for(var j=countDeployed;j>serial;j--)
+                        { 
+                          var sequence=0;
+                          db.find({hotfixNumber:j,process:'deploy', status:'success'}, function (err,docss)
+                                { 
+                                  ++sequence;
+                                  console.log(' '+sequence+'  '+docss[0]['hotfixname']+'\n ');
+                                    if(docss[0]['hotfixNumber']==serial+1)
+                                      {
+                                        process.exit(1);
+                                      }
+                                });
+                        }
+                    }
+                  else
+                    {
+                        rl.setPrompt('\n Please Note!! services will be stopped and started during UnDeployement. \n\n HIT "Y" if you wish to continue or HIT "N" to abort UnDeployement  \n ');
+                        rl.prompt();
+                        rl.on('line', function(line) {
+                        if (line === "Y"||line=="y") 
+                            rl.close();
+                        else 
+                        {  
+                            process.exit(0); 
+                        }
+                        }).on('close',function()
+                          {  
+                            db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'in progress'});
+                            var stopServicePromise= new Promise(function(resolve, reject)
+                              {
+                                stopServices(resolve, reject);
+                              });
+                            stopServicePromise.then(function(e)
+                              {
+                                undeploy(hotfx);
+                              }).catch(function(e)
+                              {
+                                console.log('.....cannot proceed with undeployement');
+                              });
+                            });
+                        }
                     });
-                 } 
-              });
-                
-        }
+                }
       });
-      });
-   }
+  }
 //List the hotfixes that are currently deployed
   if(process.argv[2]=='-list')
     {  
@@ -597,7 +585,6 @@ var undeploy= function(hotfx)
                 if(fileCurrentTemp[j]=='/')
                   {
                     fileCurrentHtml=fileCurrentTemp.substring(0,j);
-                    // console.log(fileCurrentTemp2+'/index.html');
                     break;
                   }
               }
@@ -609,7 +596,7 @@ var undeploy= function(hotfx)
                   {
                     if(docs.length>0)
                     {
-                      db.insert({hotfixNumber:docs[0]['hotfixNumber']+'U', hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'success'});
+                      db.insert({hotfixNumber:docs[0]['hotfixNumber'], hotfixname : hotfx, Updated_On: startTime, process:'undeploy',status:'success'});
                       db.remove ({hotfixname: hotfx,process:'undeploy',status:'in progress'}, {});
                     }
                   }); 
